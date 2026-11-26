@@ -1,3 +1,4 @@
+
 name: RoadForge
 
 options:
@@ -14,12 +15,20 @@ settings:
     INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: "RoadForge uses location for navigation while you are driving."
     INFOPLIST_KEY_UIBackgroundModes: "location"
 
+packages:
+  MapLibre:
+    url: https://github.com/maplibre/maplibre-gl-native-distribution
+    from: 6.31.0
+
 targets:
   RoadForge:
     type: application
     platform: iOS
     sources:
       - RoadForge
+    dependencies:
+      - package: MapLibre
+        product: MapLibre
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roadforge.app
