@@ -494,7 +494,8 @@ struct RoadForgeMap: UIViewRepresentable {
         var destinationAnnotation: MLNPointAnnotation?
         var lastLocation: CLLocation?
 
-        var routeOverlay: MLNPolyline?
+        var routeSource: MLNShapeSource?
+        var routeCoordinates: [CLLocationCoordinate2D] = []
 
         var lastRecenterTrigger = 0
         var lastZoomInTrigger = 0
@@ -576,22 +577,52 @@ struct RoadForgeMap: UIViewRepresentable {
 
         func drawRoute(_ coordinates: [CLLocationCoordinate2D]) {
             guard let mapView else { return }
-
-            clearRoute()
-
+        
+            routeCoordinates = coordinates
+            guard let style = mapView.style else { return }
+        
             let polyline = MLNPolyline(
                 coordinates: coordinates,
                 count: UInt(coordinates.count)
             )
-
-            mapView.addOverlay(polyline)
-            routeOverlay = polyline
-
-            // Fit route to visible map area
-            let rect = polyline.overlayBounds
-
+        
+            if let existingSource = style.source(
+                withIdentifier: "roadforge-route"
+            ) as? MLNShapeSource {
+                existingSource.shape = polyline
+            } else {
+                let source = MLNShapeSource(
+                    identifier: "roadforge-route",
+                    shape: polyline,
+                    options: nil
+                )
+        
+                style.addSource(source)
+                routeSource = source
+        
+                let layer = MLNLineStyleLayer(
+                    identifier: "roadforge-route-line",
+                    source: source
+                )
+        
+                layer.lineColor = NSExpression(
+                    forConstantValue: UIColor.systemBlue
+                )
+                layer.lineWidth = NSExpression(
+                    forConstantValue: 6
+                )
+                layer.lineCap = NSExpression(
+                    forConstantValue: "round"
+                )
+                layer.lineJoin = NSExpression(
+                    forConstantValue: "round"
+                )
+        
+                style.addLayer(layer)
+            }
+        
             mapView.setVisibleCoordinateBounds(
-                rect,
+                polyline.overlayBounds,
                 edgePadding: UIEdgeInsets(
                     top: 140,
                     left: 50,
@@ -601,33 +632,37 @@ struct RoadForgeMap: UIViewRepresentable {
                 animated: true
             )
         }
-
+        
         func clearRoute() {
-            if let routeOverlay, let mapView {
-                mapView.removeOverlay(routeOverlay)
+            routeCoordinates = []
+        
+            guard let mapView, let style = mapView.style else {
+                return
             }
-
-            routeOverlay = nil
+        
+            if style.layer(withIdentifier: "roadforge-route-line") != nil {
+                style.removeLayer(
+                    style.layer(withIdentifier: "roadforge-route-line")!
+                )
+            }
+        
+            if style.source(withIdentifier: "roadforge-route") != nil {
+                style.removeSource(
+                    style.source(withIdentifier: "roadforge-route")!
+                )
+            }
+        
+            routeSource = nil
         }
-
         // MARK: Polyline styling
         
         func mapView(
             _ mapView: MLNMapView,
-            rendererFor overlay: MLNOverlay
-        ) -> MLNPolylineRenderer {
-            if let polyline = overlay as? MLNPolyline {
-                let renderer = MLNPolylineRenderer(polyline: polyline)
-        
-                renderer.strokeColor = .systemBlue
-                renderer.lineWidth = 6
-                renderer.lineCap = .round
-                renderer.lineJoin = .round
-        
-                return renderer
+            didFinishLoading style: MLNStyle
+        ) {
+            if !routeCoordinates.isEmpty {
+                drawRoute(routeCoordinates)
             }
-        
-            return MLNPolylineRenderer(polyline: MLNPolyline())
         }
 
         // MARK: Map interaction
