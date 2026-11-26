@@ -38,31 +38,25 @@ final class PlaceSearchModel: ObservableObject {
                     return
                 }
 
-                let mapped = (placemarks ?? []).compactMap { placemark -> SearchResult? in
+                self.results = (placemarks ?? []).compactMap { placemark in
                     guard let location = placemark.location else {
                         return nil
                     }
 
-                    let name = placemark.name ?? trimmed
-
-                    let addressParts = [
+                    let address = [
                         placemark.locality,
                         placemark.administrativeArea,
                         placemark.country
-                    ].compactMap { $0 }
-
-                    let address = addressParts.joined(separator: ", ")
+                    ].compactMap { $0 }.joined(separator: ", ")
 
                     return SearchResult(
-                        name: name,
+                        name: placemark.name ?? trimmed,
                         address: address,
                         coordinate: location.coordinate
                     )
                 }
 
-                self.results = mapped
-
-                if mapped.isEmpty {
+                if self.results.isEmpty {
                     self.errorMessage = "No places found."
                 }
             }
@@ -87,6 +81,8 @@ struct ContentView: View {
     @State private var zoomOutTrigger = 0
     @State private var compassTrigger = 0
     @State private var destinationTrigger = 0
+    @State private var routeTrigger = 0
+
     @State private var selectedDestination: CLLocationCoordinate2D?
 
     var body: some View {
@@ -98,7 +94,8 @@ struct ContentView: View {
                 zoomOutTrigger: zoomOutTrigger,
                 compassTrigger: compassTrigger,
                 destination: selectedDestination,
-                destinationTrigger: destinationTrigger
+                destinationTrigger: destinationTrigger,
+                routeTrigger: routeTrigger
             )
             .ignoresSafeArea()
 
@@ -109,17 +106,22 @@ struct ContentView: View {
                         Image(systemName: "magnifyingglass")
                             .foregroundStyle(.secondary)
 
-                        TextField("Search places or addresses", text: $searchText)
-                            .submitLabel(.search)
-                            .onSubmit {
-                                searchModel.search(searchText)
-                            }
+                        TextField(
+                            "Search places or addresses",
+                            text: $searchText
+                        )
+                        .submitLabel(.search)
+                        .onSubmit {
+                            searchModel.search(searchText)
+                        }
 
                         if !searchText.isEmpty {
                             Button {
                                 searchText = ""
                                 searchModel.clear()
                                 selectedDestination = nil
+                                destinationTrigger += 1
+                                routeTrigger += 1
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundStyle(.secondary)
@@ -139,7 +141,7 @@ struct ContentView: View {
                 .background(.regularMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 20))
 
-                // Search results
+                // Results
                 if searchModel.isSearching ||
                     !searchModel.results.isEmpty ||
                     searchModel.errorMessage != nil {
@@ -148,7 +150,6 @@ struct ContentView: View {
                         if searchModel.isSearching {
                             HStack {
                                 ProgressView()
-
                                 Text("Searching...")
                                     .font(.subheadline)
                             }
@@ -166,7 +167,7 @@ struct ContentView: View {
                             Button {
                                 selectedDestination = result.coordinate
                                 destinationTrigger += 1
-
+                                routeTrigger += 1
                                 searchModel.clear()
                             } label: {
                                 HStack(spacing: 12) {
@@ -240,7 +241,7 @@ struct ContentView: View {
 
                 Spacer()
 
-                // Map controls
+                // Controls
                 VStack(spacing: 14) {
                     Button {
                         compassTrigger += 1
@@ -310,6 +311,7 @@ struct RoadForgeMap: UIViewRepresentable {
     var compassTrigger: Int
     var destination: CLLocationCoordinate2D?
     var destinationTrigger: Int
+    var routeTrigger: Int
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -342,7 +344,6 @@ struct RoadForgeMap: UIViewRepresentable {
 
         context.coordinator.mapView = mapView
         context.coordinator.following = true
-
         mapView.delegate = context.coordinator
 
         if let gestures = mapView.gestureRecognizers {
@@ -350,9 +351,7 @@ struct RoadForgeMap: UIViewRepresentable {
                 if let pan = gesture as? UIPanGestureRecognizer {
                     pan.addTarget(
                         context.coordinator,
-                        action: #selector(
-                            Coordinator.handlePan(_:)
-                        )
+                        action: #selector(Coordinator.handlePan(_:))
                     )
                 }
             }
@@ -377,8 +376,7 @@ struct RoadForgeMap: UIViewRepresentable {
                 mapView.addAnnotation(annotation)
                 coordinator.annotation = annotation
             } else {
-                coordinator.annotation?.coordinate =
-                    location.coordinate
+                coordinator.annotation?.coordinate = location.coordinate
             }
 
             if coordinator.lastLocation == nil {
@@ -421,6 +419,25 @@ struct RoadForgeMap: UIViewRepresentable {
                     zoomLevel: 15,
                     animated: true
                 )
+            } else if coordinator.destinationAnnotation != nil {
+                mapView.removeAnnotation(
+                    coordinator.destinationAnnotation!
+                )
+                coordinator.destinationAnnotation = nil
+            }
+        }
+
+        // Route calculation
+        if coordinator.lastRouteTrigger != routeTrigger {
+            coordinator.lastRouteTrigger = routeTrigger
+
+            if let location, let destination {
+                coordinator.calculateRoute(
+                    from: location.coordinate,
+                    to: destination
+                )
+            } else {
+                coordinator.clearRoute()
             }
         }
 
@@ -477,13 +494,145 @@ struct RoadForgeMap: UIViewRepresentable {
         var destinationAnnotation: MLNPointAnnotation?
         var lastLocation: CLLocation?
 
+        var routeOverlay: MLNPolyline?
+
         var lastRecenterTrigger = 0
         var lastZoomInTrigger = 0
         var lastZoomOutTrigger = 0
         var lastCompassTrigger = 0
         var lastDestinationTrigger = 0
+        var lastRouteTrigger = 0
 
         var following = true
+
+        // MARK: Routing
+
+        func calculateRoute(
+            from origin: CLLocationCoordinate2D,
+            to destination: CLLocationCoordinate2D
+        ) {
+            clearRoute()
+
+            let urlString =
+                "https://router.project-osrm.org/route/v1/driving/" +
+                "\(origin.longitude),\(origin.latitude);" +
+                "\(destination.longitude),\(destination.latitude)" +
+                "?overview=full&geometries=geojson"
+
+            guard let url = URL(string: urlString) else {
+                return
+            }
+
+            URLSession.shared.dataTask(with: url) {
+                [weak self] data, response, error in
+
+                guard let self,
+                      error == nil,
+                      let data,
+                      let http = response as? HTTPURLResponse,
+                      http.statusCode == 200
+                else {
+                    return
+                }
+
+                do {
+                    let json = try JSONSerialization.jsonObject(
+                        with: data
+                    ) as? [String: Any]
+
+                    guard let routes = json?["routes"] as? [[String: Any]],
+                          let firstRoute = routes.first,
+                          let geometry = firstRoute["geometry"] as? [String: Any],
+                          let coordinates = geometry["coordinates"] as? [[Double]]
+                    else {
+                        return
+                    }
+
+                    let points = coordinates.compactMap { coordinate
+                        -> CLLocationCoordinate2D? in
+
+                        guard coordinate.count >= 2 else {
+                            return nil
+                        }
+
+                        return CLLocationCoordinate2D(
+                            latitude: coordinate[1],
+                            longitude: coordinate[0]
+                        )
+                    }
+
+                    guard !points.isEmpty else {
+                        return
+                    }
+
+                    DispatchQueue.main.async {
+                        self.drawRoute(points)
+                    }
+                } catch {
+                    print("Route parsing error: \(error)")
+                }
+            }.resume()
+        }
+
+        func drawRoute(_ coordinates: [CLLocationCoordinate2D]) {
+            guard let mapView else { return }
+
+            clearRoute()
+
+            let polyline = MLNPolyline(
+                coordinates: coordinates,
+                count: UInt(coordinates.count)
+            )
+
+            mapView.addOverlay(polyline)
+            routeOverlay = polyline
+
+            // Fit route to visible map area
+            let rect = polyline.overlayBounds
+
+            mapView.setVisibleCoordinateBounds(
+                rect,
+                edgePadding: UIEdgeInsets(
+                    top: 140,
+                    left: 50,
+                    bottom: 160,
+                    right: 50
+                ),
+                animated: true
+            )
+        }
+
+        func clearRoute() {
+            if let routeOverlay, let mapView {
+                mapView.removeOverlay(routeOverlay)
+            }
+
+            routeOverlay = nil
+        }
+
+        // MARK: Polyline styling
+
+        func mapView(
+            _ mapView: MLNMapView,
+            rendererFor overlay: MLNOverlay
+        ) -> MLNOverlayRenderer {
+            if let polyline = overlay as? MLNPolyline {
+                let renderer = MLNPolylineRenderer(
+                    polyline: polyline
+                )
+
+                renderer.strokeColor = .systemBlue
+                renderer.lineWidth = 6
+                renderer.lineCap = .round
+                renderer.lineJoin = .round
+
+                return renderer
+            }
+
+            return MLNOverlayRenderer(overlay: overlay)
+        }
+
+        // MARK: Map interaction
 
         @objc func handlePan(
             _ gesture: UIPanGestureRecognizer
