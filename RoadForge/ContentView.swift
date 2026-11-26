@@ -84,6 +84,8 @@ struct ContentView: View {
     @State private var routeTrigger = 0
 
     @State private var selectedDestination: CLLocationCoordinate2D?
+    @State private var routeDistance: String?
+    @State private var routeDuration: String?
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -96,6 +98,8 @@ struct ContentView: View {
                 destination: selectedDestination,
                 destinationTrigger: destinationTrigger,
                 routeTrigger: routeTrigger
+                routeDistance: $routeDistance,
+                routeDuration: $routeDuration,
             )
             .ignoresSafeArea()
 
@@ -241,6 +245,9 @@ struct ContentView: View {
 
                 Spacer()
 
+                routeDistance: $routeDistance,
+                routeDuration: $routeDuration,
+                
                 // Controls
                 VStack(spacing: 14) {
                     Button {
@@ -312,7 +319,9 @@ struct RoadForgeMap: UIViewRepresentable {
     var destination: CLLocationCoordinate2D?
     var destinationTrigger: Int
     var routeTrigger: Int
-
+    @Binding var routeDistance: String?
+    @Binding var routeDuration: String?
+    
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
@@ -365,7 +374,13 @@ struct RoadForgeMap: UIViewRepresentable {
         context: Context
     ) {
         let coordinator = context.coordinator
-
+        coordinator.onRouteInfo = { distance, duration in
+            DispatchQueue.main.async {
+                routeDistance = distance
+                routeDuration = duration
+            }
+        }
+        
         // GPS marker
         if let location {
             if coordinator.annotation == nil {
@@ -438,6 +453,8 @@ struct RoadForgeMap: UIViewRepresentable {
                 )
             } else {
                 coordinator.clearRoute()
+                routeDistance = nil
+                routeDuration = nil
             }
         }
 
@@ -503,7 +520,7 @@ struct RoadForgeMap: UIViewRepresentable {
         var lastCompassTrigger = 0
         var lastDestinationTrigger = 0
         var lastRouteTrigger = 0
-
+        var onRouteInfo: ((String, String) -> Void)?
         var following = true
 
         // MARK: Routing
@@ -541,14 +558,37 @@ struct RoadForgeMap: UIViewRepresentable {
                         with: data
                     ) as? [String: Any]
 
-                    guard let routes = json?["routes"] as? [[String: Any]],
-                          let firstRoute = routes.first,
-                          let geometry = firstRoute["geometry"] as? [String: Any],
-                          let coordinates = geometry["coordinates"] as? [[Double]]
-                    else {
-                        return
-                    }
-
+                guard let routes = json?["routes"] as? [[String: Any]],
+                      let firstRoute = routes.first,
+                      let geometry = firstRoute["geometry"] as? [String: Any],
+                      let coordinates = geometry["coordinates"] as? [[Double]],
+                      let distance = firstRoute["distance"] as? Double,
+                      let duration = firstRoute["duration"] as? Double
+                else {
+                    return
+                }
+                
+                let distanceText: String
+                if distance >= 1609.344 {
+                    distanceText = String(
+                        format: "%.1f mi",
+                        distance / 1609.344
+                    )
+                } else {
+                    distanceText = String(
+                        format: "%.0f ft",
+                        distance * 3.28084
+                    )
+                }
+                
+                let durationText: String
+                if duration >= 3600 {
+                    let hours = Int(duration) / 3600
+                    let minutes = (Int(duration) % 3600) / 60
+                    durationText = "\(hours) hr \(minutes) min"
+                } else {
+                    durationText = "\(max(1, Int(duration) / 60)) min"
+                }
                     let points = coordinates.compactMap { coordinate
                         -> CLLocationCoordinate2D? in
 
@@ -568,6 +608,7 @@ struct RoadForgeMap: UIViewRepresentable {
 
                     DispatchQueue.main.async {
                         self.drawRoute(points)
+                        self.onRouteInfo?(distanceText, durationText)
                     }
                 } catch {
                     print("Route parsing error: \(error)")
