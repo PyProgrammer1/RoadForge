@@ -1,3 +1,4 @@
+```yaml
 name: Build RoadForge iOS
 
 on:
@@ -19,7 +20,38 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build iOS app
+      # ---------------------------
+      # iPhone Simulator Build
+      # ---------------------------
+
+      - name: Build Simulator App
+        run: |
+          xcodebuild \
+            -project RoadForge.xcodeproj \
+            -scheme RoadForge \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -derivedDataPath build/simulator \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package Simulator App
+        run: |
+          mkdir -p artifacts/simulator
+          cp -R build/simulator/Build/Products/Debug-iphonesimulator/RoadForge.app artifacts/simulator/
+
+      - name: Upload Simulator App
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoadForge-iOS-Simulator
+          path: artifacts/simulator/RoadForge.app
+
+      # ---------------------------
+      # Real iPhone Build
+      # ---------------------------
+
+      - name: Build iPhone App
         run: |
           xcodebuild \
             -project RoadForge.xcodeproj \
@@ -27,21 +59,22 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath build \
+            -derivedDataPath build/device \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build
 
       - name: Package IPA
         run: |
-          mkdir -p build/Payload
-          cp -R build/Build/Products/Release-iphoneos/RoadForge.app build/Payload/
-          cd build
+          mkdir -p artifacts/ipa/Payload
+          cp -R build/device/Build/Products/Release-iphoneos/RoadForge.app artifacts/ipa/Payload/
+          cd artifacts/ipa
           zip -r RoadForge.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: RoadForge-unsigned-ipa
-          path: build/RoadForge.ipa
+          path: artifacts/ipa/RoadForge.ipa
           if-no-files-found: error
+```
