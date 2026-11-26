@@ -5,13 +5,20 @@ import CoreLocation
 
 struct ContentView: View {
     @StateObject private var locationManager = LocationManager()
+
     @State private var recenterTrigger = 0
+    @State private var zoomInTrigger = 0
+    @State private var zoomOutTrigger = 0
+    @State private var compassTrigger = 0
 
     var body: some View {
         ZStack(alignment: .top) {
             RoadForgeMap(
                 location: locationManager.location,
-                recenterTrigger: recenterTrigger
+                recenterTrigger: recenterTrigger,
+                zoomInTrigger: zoomInTrigger,
+                zoomOutTrigger: zoomOutTrigger,
+                compassTrigger: compassTrigger
             )
             .ignoresSafeArea()
 
@@ -52,7 +59,43 @@ struct ContentView: View {
                 HStack {
                     Spacer()
 
-                    VStack(spacing: 12) {
+                    VStack(spacing: 14) {
+                        // Compass
+                        Button {
+                            compassTrigger += 1
+                        } label: {
+                            Image(systemName: "compass")
+                                .font(.title3)
+                                .foregroundStyle(.primary)
+                                .padding(14)
+                                .background(.regularMaterial, in: Circle())
+                        }
+
+                        // Zoom controls
+                        VStack(spacing: 0) {
+                            Button {
+                                zoomInTrigger += 1
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.title2.bold())
+                                    .frame(width: 48, height: 48)
+                            }
+
+                            Divider()
+                                .frame(width: 30)
+
+                            Button {
+                                zoomOutTrigger += 1
+                            } label: {
+                                Image(systemName: "minus")
+                                    .font(.title2.bold())
+                                    .frame(width: 48, height: 48)
+                            }
+                        }
+                        .background(.regularMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+
+                        // Recenter
                         Button {
                             recenterTrigger += 1
                         } label: {
@@ -83,6 +126,9 @@ struct ContentView: View {
 struct RoadForgeMap: UIViewRepresentable {
     var location: CLLocation?
     var recenterTrigger: Int
+    var zoomInTrigger: Int
+    var zoomOutTrigger: Int
+    var compassTrigger: Int
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -124,7 +170,8 @@ struct RoadForgeMap: UIViewRepresentable {
                     pan.addTarget(
                         context.coordinator,
                         action: #selector(
-                            Coordinator.handlePan(_:))
+                            Coordinator.handlePan(_:)
+                        )
                     )
                 }
             }
@@ -139,6 +186,7 @@ struct RoadForgeMap: UIViewRepresentable {
     ) {
         let coordinator = context.coordinator
 
+        // GPS marker
         if let location {
             if coordinator.annotation == nil {
                 let annotation = MLNPointAnnotation()
@@ -168,6 +216,7 @@ struct RoadForgeMap: UIViewRepresentable {
             coordinator.lastLocation = location
         }
 
+        // Recenter
         if coordinator.lastRecenterTrigger != recenterTrigger {
             coordinator.lastRecenterTrigger = recenterTrigger
 
@@ -181,6 +230,36 @@ struct RoadForgeMap: UIViewRepresentable {
                 )
             }
         }
+
+        // Zoom in
+        if coordinator.lastZoomInTrigger != zoomInTrigger {
+            coordinator.lastZoomInTrigger = zoomInTrigger
+
+            mapView.setZoomLevel(
+                mapView.zoomLevel + 1,
+                animated: true
+            )
+        }
+
+        // Zoom out
+        if coordinator.lastZoomOutTrigger != zoomOutTrigger {
+            coordinator.lastZoomOutTrigger = zoomOutTrigger
+
+            mapView.setZoomLevel(
+                mapView.zoomLevel - 1,
+                animated: true
+            )
+        }
+
+        // Reset compass / north
+        if coordinator.lastCompassTrigger != compassTrigger {
+            coordinator.lastCompassTrigger = compassTrigger
+
+            mapView.setDirection(
+                0,
+                animated: true
+            )
+        }
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate {
@@ -188,10 +267,17 @@ struct RoadForgeMap: UIViewRepresentable {
 
         var annotation: MLNPointAnnotation?
         var lastLocation: CLLocation?
+
         var lastRecenterTrigger = 0
+        var lastZoomInTrigger = 0
+        var lastZoomOutTrigger = 0
+        var lastCompassTrigger = 0
+
         var following = true
 
-        @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
+        @objc func handlePan(
+            _ gesture: UIPanGestureRecognizer
+        ) {
             if gesture.state == .began {
                 following = false
             }
