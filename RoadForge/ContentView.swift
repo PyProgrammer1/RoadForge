@@ -611,25 +611,23 @@ struct RoadForgeMap: UIViewRepresentable {
         }
 
         // MARK: Polyline styling
-
+        
         func mapView(
             _ mapView: MLNMapView,
             rendererFor overlay: MLNOverlay
-        ) -> MLNOverlayRenderer {
+        ) -> MLNPolylineRenderer {
             if let polyline = overlay as? MLNPolyline {
-                let renderer = MLNPolylineRenderer(
-                    polyline: polyline
-                )
-
+                let renderer = MLNPolylineRenderer(polyline: polyline)
+        
                 renderer.strokeColor = .systemBlue
                 renderer.lineWidth = 6
                 renderer.lineCap = .round
                 renderer.lineJoin = .round
-
+        
                 return renderer
             }
-
-            return MLNOverlayRenderer(overlay: overlay)
+        
+            return MLNPolylineRenderer(polyline: MLNPolyline())
         }
 
         // MARK: Map interaction
